@@ -1,0 +1,15 @@
+version: '3.4'
+
+services:
+  bsky:
+    image: bsky-feed
+    build:
+      context: .
+      dockerfile: dockerfile
+    ports:
+      - 5000:80
+    volumes:
+      - ./appsettings.json:/App/appsettings.json
+      - ./bsky.db:/App/bsky.db
+      - ./bsky.db-shm:/App/bsky.db-shm
+      - ./bsky.db-wal:/App/bsky.db-wal
