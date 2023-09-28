@@ -1,3 +1,4 @@
+using BlueskyFeedGenerator.Auth;
 using BlueskyFeedGenerator.Config;
 using BlueskyFeedGenerator.Database;
 using BlueskyFeedGenerator.Feeds;
@@ -16,6 +17,8 @@ internal class Program
         // Configure feeds
         var feedConfig = builder.Configuration.GetSection(FeedConfig.SectionName).Get<FeedConfig>() ?? throw new Exception("No feed config found!");
         builder.Services.AddSingleton(feedConfig);
+
+        builder.Services.AddSingleton(new DidResolver(new HttpClient(), "https://plc.directory"));
         builder.Services.AddSingleton<LinuxFeed>();
         builder.Services.AddSingleton<FFXIVFeed>();
         builder.Services.AddSingleton(x => {
@@ -26,11 +29,10 @@ internal class Program
             };
             return feeds;
         });
-
-        builder.Services.AddLogging();
+        
+        var atProtoConfig = builder.Configuration.GetSection(AtProtoConfig.SectionName).Get<AtProtoConfig>() ?? throw new Exception("No ATProto config found!");
         builder.Services.AddSingleton(serviceProvider =>
         {
-            var atProtoConfig = builder.Configuration.GetSection(AtProtoConfig.SectionName).Get<AtProtoConfig>() ?? throw new Exception("No ATProto config found!");
 
             var logger = serviceProvider.GetRequiredService<ILogger<ATProtocol>>();
             var client = new ATProtocolBuilder()
@@ -42,9 +44,9 @@ internal class Program
             return client;
         });
 
+        var connString = builder.Configuration.GetConnectionString("DefaultConnection") ?? throw new Exception("No connection string found!");
         builder.Services.AddDbContext<DataContext>(options =>
         {            
-            var connString = builder.Configuration.GetConnectionString("DefaultConnection") ?? throw new Exception("No connection string found!");
             var contextBuilder = options
                 .UseSqlite(connString);
 
@@ -57,6 +59,7 @@ internal class Program
         builder.Services.AddSingleton<FeedMessageProcessor>();
         builder.Services.AddHostedService<FeedMessageProcessor>(x => x.GetRequiredService<FeedMessageProcessor>());
 
+        builder.Services.AddLogging();
         builder.Services.AddControllers();
 
         // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
@@ -65,8 +68,6 @@ internal class Program
         
         var app = builder.Build();
         app.UseHttpLogging();
-
-        
 
         // Configure the HTTP request pipeline.
         if (app.Environment.IsDevelopment())

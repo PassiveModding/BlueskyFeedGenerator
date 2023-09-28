@@ -7,6 +7,7 @@ namespace BlueskyFeedGenerator.Feeds;
 public class LinuxFeed : IFeed
 {
     public FeedFlag Flag => FeedFlag.Linux;
+    public bool AuthorizeUser => false;
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<LinuxFeed> _logger;
 
@@ -28,7 +29,7 @@ public class LinuxFeed : IFeed
         return Task.FromResult(false);
     }
 
-    public async Task<object> RetrieveAsync(string? cursor, int limit, CancellationToken cancellationToken)
+    public async Task<object> RetrieveAsync(string? cursor, int limit, string? issuerDid, CancellationToken cancellationToken)
     {
         using var scope = _serviceProvider.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<DataContext>();

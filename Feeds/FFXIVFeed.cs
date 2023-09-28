@@ -7,6 +7,7 @@ namespace BlueskyFeedGenerator.Feeds;
 public class FFXIVFeed : IFeed
 {
     public FeedFlag Flag => FeedFlag.FFXIV;
+    public bool AuthorizeUser => false;
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<FFXIVFeed> _logger;
     public FFXIVFeed(IServiceProvider serviceProvider, ILogger<FFXIVFeed> logger)
@@ -29,7 +30,7 @@ public class FFXIVFeed : IFeed
         return Task.FromResult(false);
     }
     
-    public async Task<object> RetrieveAsync(string? cursor, int limit, CancellationToken cancellationToken)
+    public async Task<object> RetrieveAsync(string? cursor, int limit, string? issuerDid, CancellationToken cancellationToken)
     {
         using var scope = _serviceProvider.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<DataContext>();
