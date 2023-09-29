@@ -149,7 +149,7 @@ internal class Program
                 {
                     // register feed as it's type 
                     var feed = (IFeed)serviceProvider.GetRequiredService(type);
-                    feedDictionary.Add(feedName, feed);
+                    feedDictionary.Add($"at://{feedConfig.PublisherDid}/app.bsky.feed.generator/{feedName}", feed);
                     logger.LogInformation("Registered feed {name} ({feedName}) as {type}", name, feedName, type);
                 }
                 else
