@@ -13,6 +13,7 @@ public class MyPostsFeed : IFeed
     public FeedFlag Flag => FeedFlag.None;
 
     public bool AuthorizeUser => true;
+    public string Shortname => "myposts";
 
     public ATProtocol ATProtocol { get; }
     public ILogger<MyPostsFeed> Logger { get; }
@@ -35,7 +36,7 @@ public class MyPostsFeed : IFeed
         {
             throw new ArgumentNullException(nameof(issuerDid));
         }
-        
+
         // lookup user profile using issuerdid
         var posts = await ATProtocol.Repo.ListPostsAsync(ATDid.Create(issuerDid)!, limit, cursor, null, cancellationToken);
 

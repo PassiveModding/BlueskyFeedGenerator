@@ -23,12 +23,33 @@ internal class Program
         builder.Services.AddSingleton<FFXIVFeed>();
         builder.Services.AddSingleton<MyPostsFeed>();
         builder.Services.AddSingleton(x => {
-            var feeds = new Dictionary<string, IFeed>
+            var feeds = new Dictionary<string, IFeed>();
+            var feedConfig = x.GetRequiredService<FeedConfig>();
+
+            // get all services implementing IFeed and add them to the dictionary
+            // this collection is used by the feed message processor to categorize posts and by the feed controller to retrieve posts
+            var feedTypes = typeof(IFeed).Assembly.GetTypes().Where(t => typeof(IFeed).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface);
+            var logger = x.GetRequiredService<ILogger<Program>>();
+            foreach (var feedType in feedTypes)
             {
-                { $"at://{feedConfig.PublisherDid}/app.bsky.feed.generator/linux-feed", x.GetRequiredService<LinuxFeed>() },
-                { $"at://{feedConfig.PublisherDid}/app.bsky.feed.generator/ffxiv-feed", x.GetRequiredService<FFXIVFeed>() },
-                { $"at://{feedConfig.PublisherDid}/app.bsky.feed.generator/myposts-feed", x.GetRequiredService<MyPostsFeed>() }
-            };
+                if (x.GetService(feedType) is IFeed feed)
+                {
+                    if (!feedConfig.Feeds.TryGetValue(feed.Shortname, out var feedName))
+                    {
+                        // log and continue
+                        logger.LogWarning("Failed to find feed name for {feedType}", feedType);
+                        continue;
+                    }
+
+                    feeds.Add($"at://{feedConfig.PublisherDid}/app.bsky.feed.generator/{feedName}", feed);
+                    logger.LogInformation("Created feed {feedType}", feedType);
+                }
+                else
+                {
+                    // log and continue
+                    logger.LogWarning("Failed to create feed {feedType}", feedType);
+                }
+            }
             return feeds;
         });
         
