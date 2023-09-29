@@ -21,11 +21,13 @@ internal class Program
         builder.Services.AddSingleton(new DidResolver(new HttpClient(), "https://plc.directory"));
         builder.Services.AddSingleton<LinuxFeed>();
         builder.Services.AddSingleton<FFXIVFeed>();
+        builder.Services.AddSingleton<MyPostsFeed>();
         builder.Services.AddSingleton(x => {
             var feeds = new Dictionary<string, IFeed>
             {
                 { $"at://{feedConfig.PublisherDid}/app.bsky.feed.generator/linux-feed", x.GetRequiredService<LinuxFeed>() },
-                { $"at://{feedConfig.PublisherDid}/app.bsky.feed.generator/ffxiv-feed", x.GetRequiredService<FFXIVFeed>() }
+                { $"at://{feedConfig.PublisherDid}/app.bsky.feed.generator/ffxiv-feed", x.GetRequiredService<FFXIVFeed>() },
+                { $"at://{feedConfig.PublisherDid}/app.bsky.feed.generator/myposts-feed", x.GetRequiredService<MyPostsFeed>() }
             };
             return feeds;
         });
