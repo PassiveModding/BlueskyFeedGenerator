@@ -4,11 +4,11 @@ using Microsoft.EntityFrameworkCore;
 
 namespace BlueskyFeedGenerator.Feeds;
 
+[Feed("linux")]
 public class LinuxFeed : IFeed
 {
     public FeedFlag Flag => FeedFlag.Linux;
     public bool AuthorizeUser => false;
-    public string Shortname => "linux";
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<LinuxFeed> _logger;
 

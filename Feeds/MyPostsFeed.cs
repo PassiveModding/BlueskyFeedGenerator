@@ -8,12 +8,12 @@ namespace BlueskyFeedGenerator.Feeds;
 /// Example feed that retrieves posts from the requestors profile
 /// Does not query the database, instead uses the ATProtocol to retrieve posts
 /// </summary>
+[Feed("my-posts")]
 public class MyPostsFeed : IFeed
 {
     public FeedFlag Flag => FeedFlag.None;
 
     public bool AuthorizeUser => true;
-    public string Shortname => "myposts";
 
     public ATProtocol ATProtocol { get; }
     public ILogger<MyPostsFeed> Logger { get; }

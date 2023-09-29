@@ -4,11 +4,11 @@ using Microsoft.EntityFrameworkCore;
 
 namespace BlueskyFeedGenerator.Feeds;
 
+[Feed("ffxiv")]
 public class FFXIVFeed : IFeed
 {
     public FeedFlag Flag => FeedFlag.FFXIV;
     public bool AuthorizeUser => false;
-    public string Shortname => "ffxiv";
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<FFXIVFeed> _logger;
     public FFXIVFeed(IServiceProvider serviceProvider, ILogger<FFXIVFeed> logger)

@@ -5,7 +5,6 @@ public interface IFeed
 {
     public FeedFlag Flag { get; }
     public bool AuthorizeUser { get; }
-    public string Shortname { get; }
 
     // Get posts for feed
     public Task<object> RetrieveAsync(string? cursor, int limit, string? issuerDid, CancellationToken cancellationToken);
