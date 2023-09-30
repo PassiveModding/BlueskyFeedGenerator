@@ -11,5 +11,4 @@ services:
     volumes:
       - ./appsettings.json:/App/appsettings.json
       - ./bsky.db:/App/bsky.db
-      - ./bsky.db-shm:/App/bsky.db-shm
-      - ./bsky.db-wal:/App/bsky.db-wal
+      - ./Keywords:/App/Keywords
