@@ -29,8 +29,8 @@ internal class Program
             options.IncludeScopes = true;
             options.SingleLine = true;
             options.TimestampFormat = "yyyy-MM-dd HH:mm:ss ";
+            options.UseUtcTimestamp = true;
         });
-
 
         ConfigureAtproto(builder);
         ConfigureFeeds(builder);
@@ -42,7 +42,13 @@ internal class Program
         // new DidResolver(httpclient, "https://plc.directory")
         builder.Services.AddSingleton(serviceProvider => new DidResolver(serviceProvider.GetRequiredService<IHttpClientFactory>().CreateClient(), PLC_URL));
         builder.Services.AddSingleton<FeedMessageProcessor>();
-        builder.Services.AddHostedService(x => x.GetRequiredService<FeedMessageProcessor>());
+
+        // config option for starting the feed message processor
+        var startFeedMessageProcessor = builder.Configuration.GetValue<bool>("StartFeedMessageProcessor");
+        if (startFeedMessageProcessor)
+        {
+            builder.Services.AddHostedService(x => x.GetRequiredService<FeedMessageProcessor>());
+        }
 
         builder.Services.AddControllers();
 
