@@ -1,8 +1,6 @@
-using System.Text.Json.Serialization;
 using BlueskyFeedGenerator.Auth;
 using BlueskyFeedGenerator.Config;
 using BlueskyFeedGenerator.Feeds;
-using BlueskyFeedGenerator.Models;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BlueskyFeedGenerator.Controllers;
@@ -93,8 +91,7 @@ public class FeedController : ControllerBase
         }
     }
 
-    [Route(".well-known/did.json")]
-    [HttpGet]
+    [HttpGet("/.well-known/did.json")]
     public Task<IActionResult> Get()
     {
         if (string.IsNullOrEmpty(Config.ServiceDid) || !Config.ServiceDid.EndsWith(Config.HostName))
