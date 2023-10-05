@@ -96,7 +96,7 @@ public class Program
                 loggingBuilder.ClearProviders();
                 loggingBuilder.AddSimpleConsole(opts =>
                 {
-                    opts.IncludeScopes = true;
+                    //opts.IncludeScopes = true;
                     opts.SingleLine = true;
                     opts.TimestampFormat = "yyyy-MM-dd HH:mm:ss ";
                     opts.UseUtcTimestamp = true;
@@ -105,8 +105,6 @@ public class Program
             })
             .Configure((hostContext, app) =>
             {
-                app.UseHttpLogging();
-
                 if (hostContext.HostingEnvironment.IsDevelopment())
                 {
                     app.UseSwagger();
