@@ -55,81 +55,92 @@ public class FirehoseListener : IHostedService
         await client.StartSubscribeReposAsync();
 
         // timer for event processing
-        var _ = Task.Run(async () =>
+        var _ = Task.Run(async () => await ProcessLoop(cancellationToken), cancellationToken);
+    }
+
+    private async Task ProcessLoop(CancellationToken cancellationToken)
+    {
+        var loggingInterval = TimeSpan.FromSeconds(30);
+        var processingTimeout = TimeSpan.FromSeconds(30);
+        var lastLogTime = DateTime.UtcNow;
+        var eventCount = 0;
+
+        while (!cancellationTokenSource.IsCancellationRequested)
         {
-            while (!cancellationTokenSource.IsCancellationRequested)
+            var newQueue = new ConcurrentQueue<SubscribedRepoEventArgs>();
+            var oldQueue = Interlocked.Exchange(ref eventQueue, newQueue);
+
+            if (!oldQueue.IsEmpty)
             {
-                var newQueue = new ConcurrentQueue<SubscribedRepoEventArgs>();
-                var oldQueue = Interlocked.Exchange(ref eventQueue, newQueue);
+                eventCount += oldQueue.Count;
+            }
+            else
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
+                continue;
+            }
 
+            // for every 100 events, create a new scope and process them in parallel
+            var chunks = 100;
+            var tasks = new List<Task>();
 
-                if (!oldQueue.IsEmpty)
+            var cancel = new CancellationTokenSource();
+            while (!oldQueue.IsEmpty)
+            {
+                var chunk = new List<SubscribedRepoEventArgs>();
+                for (var i = 0; i < chunks; i++)
                 {
-                    _logger.LogInformation("Processing {count} events", oldQueue.Count);
-                }
-                else
-                {
-                    await Task.Delay(1000, cancellationToken);
-                    continue;
-                }
-
-                // for every 100 events, create a new scope and process them in parallel
-                var chunks = 100;
-                var tasks = new List<Task>();
-
-                var cancel = new CancellationTokenSource();
-                while (!oldQueue.IsEmpty)
-                {
-                    var chunk = new List<SubscribedRepoEventArgs>();
-                    for (var i = 0; i < chunks; i++)
+                    if (oldQueue.TryDequeue(out var e))
                     {
-                        if (oldQueue.TryDequeue(out var e))
+                        chunk.Add(e);
+                    }
+                }
+
+                tasks.Add(Task.Run(async () =>
+                {
+                    using var scope = _serviceProvider.CreateScope();
+                    var db = scope.ServiceProvider.GetRequiredService<PostContext>();
+                    foreach (var e in chunk)
+                    {
+                        try
                         {
-                            chunk.Add(e);
+                            if (e.Message.Record?.Type == "app.bsky.feed.post")
+                            {
+                                await HandlePost(db, e, cancel.Token);
+                            }
+                            else if (e.Message.Record == null && e.Message.Commit != null && e.Message.Commit.Ops != null)
+                            {
+                                if (e.Message.Commit.Ops[0].Action == "delete")
+                                {
+                                    await DeletePost(db, e.Message.Commit!.Ops![0], cancel.Token);
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Error handling event");
                         }
                     }
 
-                    tasks.Add(Task.Run(async () =>
-                    {
-                        using var scope = _serviceProvider.CreateScope();
-                        var db = scope.ServiceProvider.GetRequiredService<PostContext>();
-                        foreach (var e in chunk)
-                        {
-                            try
-                            {
-                                if (e.Message.Record?.Type == "app.bsky.feed.post")
-                                {
-                                    await HandlePost(db, e, cancel.Token);
-                                }
-                                else if (e.Message.Record == null && e.Message.Commit != null && e.Message.Commit.Ops != null)
-                                {
-                                    if (e.Message.Commit.Ops[0].Action == "delete")
-                                    {
-                                        await DeletePost(db, e.Message.Commit!.Ops![0], cancel.Token);
-                                    }
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.LogError(ex, "Error handling event");
-                            }
-                        }
-
-                        await db.SaveChangesAsync(cancel.Token);
-                    }, cancel.Token));
-                }
-
-                // max time to wait for all tasks to complete
-                var timeout = TimeSpan.FromSeconds(60);
-                var allTasks = Task.WhenAll(tasks);
-                var completed = await Task.WhenAny(allTasks, Task.Delay(timeout, cancellationToken));     
-                if (completed != allTasks)
-                {
-                    _logger.LogError("Timed out waiting for tasks to complete");
-                    cancel.Cancel();
-                }  
+                    await db.SaveChangesAsync(cancel.Token);
+                }, cancel.Token));
             }
-        }, cancellationToken);
+
+            var allTasks = Task.WhenAll(tasks);
+            var completed = await Task.WhenAny(allTasks, Task.Delay(processingTimeout, cancellationToken));     
+            if (completed != allTasks)
+            {
+                _logger.LogError("Timed out waiting for tasks to complete");
+                cancel.Cancel();
+            } 
+
+            if (DateTime.UtcNow - lastLogTime >= loggingInterval)
+            {
+                _logger.LogInformation("Processed {count} events in the last {interval} seconds", eventCount, loggingInterval.TotalSeconds);
+                lastLogTime = DateTime.UtcNow;
+                eventCount = 0;
+            } 
+        }
     }
 
     private void HandleConnectionUpdated(object? sender, SubscriptionConnectionStatusEventArgs e, ATProtocol client)
