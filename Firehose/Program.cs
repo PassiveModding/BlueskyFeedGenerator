@@ -48,8 +48,8 @@ public class Program
 
                 services.AddHostedService<FirehoseListener>();
 
-                services.AddSingleton<ISanitizer, PostSanitizer>();
-                services.AddHostedService<PostProcessor>();
+                services.AddSingleton<ISanitizer, TextSanitizer>();
+                services.AddHostedService<PostSanitizer>();
                 
                 services.AddSingleton(serviceProvider =>
                 {
@@ -66,7 +66,7 @@ public class Program
 
                     return new ClassifierFactory(classifiers);
                 });
-                services.AddHostedService<Classifier>();
+                services.AddHostedService<PostClassifier>();
             })
             .ConfigureLogging((hostContext, loggingBuilder) =>
             {

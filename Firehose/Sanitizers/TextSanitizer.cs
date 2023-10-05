@@ -3,7 +3,7 @@ using LemmaSharp;
 
 namespace Bluesky.Firehose.Sanitizers;
 
-public partial class PostSanitizer : ISanitizer
+public partial class TextSanitizer : ISanitizer
 {
     //[GeneratedRegex("[^a-zA-Z0-9 ]+")]
     //private static partial Regex Alphanumeric();
@@ -17,7 +17,7 @@ public partial class PostSanitizer : ISanitizer
     private readonly HashSet<string> _stopwords;
     private readonly ILemmatizer _lemmatizer;
 
-    public PostSanitizer(string[]? stopwords = null)
+    public TextSanitizer(string[]? stopwords = null)
     {
         _lemmatizer = InitLemmatizer();
         _stopwords = stopwords != null ? new HashSet<string>(stopwords) : InitStopwords();

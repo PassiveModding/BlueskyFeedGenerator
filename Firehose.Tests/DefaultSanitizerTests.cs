@@ -8,11 +8,11 @@ namespace Firehose.Tests;
 
 public class DefaultSanitizerTests
 {
-    private readonly PostSanitizer sanitizer;
+    private readonly TextSanitizer sanitizer;
 
     public DefaultSanitizerTests()
     {
-        sanitizer = new PostSanitizer();
+        sanitizer = new TextSanitizer();
     }
 
     [Fact]
@@ -97,7 +97,7 @@ public class DefaultSanitizerTests
     {
         // this is to ensure our stopwords will still be useful after normalization
         var stopWords = sanitizer.GetStopWords().ToArray();
-        var newStopwords = stopWords.Select(s => PostSanitizer.Normalize(s));
+        var newStopwords = stopWords.Select(s => TextSanitizer.Normalize(s));
         // export for debugging
         File.WriteAllLines("stopwords_normalized.txt", newStopwords);
 
@@ -135,7 +135,7 @@ public class DefaultSanitizerTests
             var keyWords = keywordClassifier.GetKeywords().ToArray();
 
             // keyword = Keyword(string[] terms, int weight)
-            var newKeywords = keyWords.Select(k => new Keyword(k.Keywords.Select(s => PostSanitizer.Normalize(s)).ToArray(), k.Weight));
+            var newKeywords = keyWords.Select(k => new Keyword(k.Keywords.Select(s => TextSanitizer.Normalize(s)).ToArray(), k.Weight));
             // export for debugging
             File.WriteAllLines(Path.GetFileNameWithoutExtension(file) + "_normalized.txt", newKeywords.Select(k => $"{string.Join("|", k.Keywords)},{k.Weight}"));
 

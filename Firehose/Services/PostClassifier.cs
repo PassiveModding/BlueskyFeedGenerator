@@ -9,13 +9,13 @@ using Microsoft.Extensions.Logging;
 
 namespace Bluesky.Firehose.Services;
 
-public class Classifier : IHostedService
+public class PostClassifier : IHostedService
 {
-    private readonly ILogger<Classifier> _logger;
+    private readonly ILogger<PostClassifier> _logger;
     private readonly IServiceProvider _serviceProvider;
     private readonly ClassifierFactory classifierFactory;
 
-    public Classifier(ILogger<Classifier> logger, IServiceProvider serviceProvider, ClassifierFactory classifierFactory)
+    public PostClassifier(ILogger<PostClassifier> logger, IServiceProvider serviceProvider, ClassifierFactory classifierFactory)
     {
         _logger = logger;
         _serviceProvider = serviceProvider;
@@ -33,35 +33,43 @@ public class Classifier : IHostedService
 
     private async Task ProcessLoop(CancellationToken cancellationToken)
     {
+        var processingTimeout = TimeSpan.FromSeconds(30);
+        var loggingInterval = TimeSpan.FromSeconds(30);
+        var lastLogTime = DateTime.UtcNow;
+        var processedCount = 0;
         int batchSize = 100;
         while (!cancellationToken.IsCancellationRequested)
         {
             try
-            {            
-                var sw = Stopwatch.StartNew();    
-                var processed = await ProcessPosts(batchSize, cancellationToken);
-                sw.Stop();
-                _logger.LogTrace("Processed {count} posts in {time}ms", processed.Sum(), sw.ElapsedMilliseconds);
+            {
+                var cancel = new CancellationTokenSource();
+                var processed = ProcessPosts(batchSize, cancel.Token);
+                var delayTask = Task.Delay(processingTimeout, cancellationToken);
 
-                // increase batch size if sw is less than 2s
-                if (sw.ElapsedMilliseconds < 2000)
+                // if processing does not complete before the delay, cancel it
+                var completedTask = await Task.WhenAny(processed, delayTask);
+                if (completedTask == delayTask)
                 {
-                    batchSize += 1000;
+                    cancel.Cancel();
+                    _logger.LogInformation("Processing posts took longer than {processingInterval}, cancelling", processingTimeout);
                 }
-                else if (sw.ElapsedMilliseconds > 5000)
+                else
                 {
-                    batchSize -= 100;
-                    if (batchSize < 100)
+                    var postCount = await processed;
+                    var posts = postCount.Sum();
+                    processedCount += posts;
+                    if (posts == 0)
                     {
-                        batchSize = 100;
+                        await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
                     }
                 }
 
-                if (processed.Sum() == 0)
+                if (DateTime.UtcNow - lastLogTime > loggingInterval)
                 {
-                    batchSize = 100;
-                    await Task.Delay(1000, cancellationToken);
-                }
+                    _logger.LogInformation("Classified {count} posts in the last {time} seconds", processedCount, loggingInterval.TotalSeconds);
+                    lastLogTime = DateTime.UtcNow;
+                    processedCount = 0;
+                }                
             }
             catch (Exception ex)
             {
