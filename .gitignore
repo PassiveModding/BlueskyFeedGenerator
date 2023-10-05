@@ -1,0 +1,21 @@
+# gitingnore
+
+# dotnet 
+*/.vscode
+*/.vs
+*/bin
+*/obj
+*/packages
+.vscode/*
+.vs/*
+bin/*
+obj/*
+
+
+appsettings.json
+appsettings.Development.json
+*/keywords/*.csv
+tmp.txt
+*.bak
+Firehose/stopwords_normalized.txt
+Firehose/stopwords_original.txt

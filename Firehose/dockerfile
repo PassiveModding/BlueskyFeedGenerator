@@ -1,0 +1,20 @@
+FROM mcr.microsoft.com/dotnet/sdk:7.0 AS build-env
+WORKDIR /app
+
+# Copy common
+COPY ./Common ./Common
+RUN dotnet restore ./Common/Common.csproj
+
+# Copy Firehose
+COPY ./Firehose ./Firehose
+
+# Restore as distinct layers
+RUN dotnet restore ./Firehose/BlueskyFirehose.csproj
+# Build and publish a release
+RUN dotnet publish -c Release -o out ./Firehose/BlueskyFirehose.csproj
+
+# Build runtime image net7
+FROM mcr.microsoft.com/dotnet/aspnet:7.0
+WORKDIR /app
+COPY --from=build-env /app/out .
+ENTRYPOINT ["dotnet", "BlueskyFirehose.dll"]
