@@ -1,7 +1,7 @@
+using System.Diagnostics;
 using Bluesky.Common.Database;
 using Bluesky.Common.Models;
 using Bluesky.Firehose.Classifiers;
-using Bluesky.Firehose.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -13,13 +13,13 @@ public class Classifier : IHostedService
 {
     private readonly ILogger<Classifier> _logger;
     private readonly IServiceProvider _serviceProvider;
-    private readonly IClassifier _classifier;
+    private readonly ClassifierFactory classifierFactory;
 
-    public Classifier(ILogger<Classifier> logger, IServiceProvider serviceProvider, IClassifier classifier)
+    public Classifier(ILogger<Classifier> logger, IServiceProvider serviceProvider, ClassifierFactory classifierFactory)
     {
         _logger = logger;
         _serviceProvider = serviceProvider;
-        _classifier = classifier;
+        this.classifierFactory = classifierFactory;
     }
 
     // take posts from db, classify them into one or more feeds, save to topics table
@@ -33,20 +33,35 @@ public class Classifier : IHostedService
 
     private async Task ProcessLoop(CancellationToken cancellationToken)
     {
-        int logCounter = 0;
+        int batchSize = 100;
         while (!cancellationToken.IsCancellationRequested)
         {
             try
-            {
-                if (logCounter % 60 == 0)
+            {            
+                var sw = Stopwatch.StartNew();    
+                var processed = await ProcessPosts(batchSize, cancellationToken);
+                sw.Stop();
+                _logger.LogTrace("Processed {count} posts in {time}ms", processed.Sum(), sw.ElapsedMilliseconds);
+
+                // increase batch size if sw is less than 2s
+                if (sw.ElapsedMilliseconds < 2000)
                 {
-                    await LogStats(cancellationToken);
+                    batchSize += 1000;
+                }
+                else if (sw.ElapsedMilliseconds > 5000)
+                {
+                    batchSize -= 100;
+                    if (batchSize < 100)
+                    {
+                        batchSize = 100;
+                    }
                 }
 
-                var process = ProcessPosts(cancellationToken);
-
-                await Task.WhenAll(process, Task.Delay(TimeSpan.FromSeconds(10), cancellationToken));
-                logCounter++;
+                if (processed.Sum() == 0)
+                {
+                    batchSize = 100;
+                    await Task.Delay(1000, cancellationToken);
+                }
             }
             catch (Exception ex)
             {
@@ -55,135 +70,74 @@ public class Classifier : IHostedService
         }
     }
 
-    // cache last 10 post ids so we don't keep printing them
-    private readonly Dictionary<string, HashSet<string>> lastPostIds = new();
-
-    private async Task LogStats(CancellationToken cancellationToken)
+    private async Task<int[]> ProcessPosts(int batchSize, CancellationToken cancellationToken)
     {
         using var scope = _serviceProvider.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<PostContext>();
-
-        var postCount = await dbContext.Posts.CountAsync(cancellationToken);
-        var postTopicCount = await dbContext.PostTopics.CountAsync(cancellationToken);
-        var topicCount = await dbContext.Topics.CountAsync(cancellationToken);
-
-        _logger.LogInformation("Post count: {postCount}, PostTopic count: {postTopicCount}, Topic count: {topicCount}", postCount, postTopicCount, topicCount);
-
-        // print last 10 posts matching each category
         var topics = await dbContext.Topics.ToListAsync(cancellationToken);
-        foreach (var topic in topics)
+
+        int[] processed = new int[topics.Count];
+        // get posts which do not have a record for each topic
+        for (int i = 0; i < topics.Count; i++)
         {
-            // posts where score > 100 and topic matches
-            var posts = await dbContext.Posts.Where(p => p.PostTopics.Any(pt => pt.TopicId == topic.Name && pt.Weight >= 100))
+            Topic? topic = topics[i];
+            var classifier = classifierFactory.GetFeed(topic.Name);
+            if (classifier == null)
+            {
+                continue;
+            }
+
+            var sw = Stopwatch.StartNew();
+            // get only post text and id
+            var posts = await dbContext.Posts.Where(p => p.SanitizedText != null && !p.PostTopics.Any(pt => pt.TopicId == topic.Name))
                 .OrderByDescending(p => p.IndexedAt)
-                .Take(10)
+                .Take(batchSize)
+                .Select(p => new
+                {
+                    p.Uri,
+                    p.SanitizedText,
+                    p.Text
+                })                
                 .ToListAsync(cancellationToken);
+            sw.Stop();
+            _logger.LogTrace("Retrieved {count} posts for {topic} in {time}ms", posts.Count, topic.Name, sw.ElapsedMilliseconds);
 
-            if (posts.Count > 0 && posts.Any(p => !lastPostIds.ContainsKey(topic.Name) || !lastPostIds[topic.Name].Contains(p.Uri)))
+            if (posts.Count == 0)
             {
-                if (!lastPostIds.ContainsKey(topic.Name))
-                {
-                    lastPostIds[topic.Name] = new HashSet<string>();
-                }
+                continue;
+            }
 
-                _logger.LogInformation("Last posts for {topic}:", topic.Name);
-                foreach (var post in posts)
-                {
-                    if (lastPostIds[topic.Name].Contains(post.Uri))
-                    {
-                        continue;
-                    }
 
-                    _logger.LogInformation("  {path} - {text}", post.Path, post.Text);
-                    lastPostIds[topic.Name].Add(post.Uri);
-                }
-
-                // clear out old post ids
-                if (lastPostIds[topic.Name].Count > 10)
+            sw.Restart();
+            int scoresOver100 = 0;
+            foreach (var post in posts)
+            {
+                processed[i]++;
+                var topicWeight = classifier.GenerateScore(post.SanitizedText!);
+                var postTopic = new PostTopic
                 {
-                    var toRemove = lastPostIds[topic.Name].Take(lastPostIds[topic.Name].Count - 10).ToList();
-                    foreach (var remove in toRemove)
-                    {
-                        lastPostIds[topic.Name].Remove(remove);
-                    }
+                    PostId = post.Uri,
+                    TopicId = topic.Name,
+                    Weight = topicWeight
+                };
+                dbContext.PostTopics.Add(postTopic);
+                if (topicWeight >= 100)
+                {
+                    scoresOver100++;
                 }
             }
-        }
-    }
+            sw.Stop();
+            _logger.LogTrace("Classified {count} posts for {topic} in {time}ms", posts.Count, topic.Name, sw.ElapsedMilliseconds);
 
-    private async Task ProcessPosts(CancellationToken cancellationToken)
-    {
-        using var scope = _serviceProvider.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<PostContext>();
-
-        // unknown topic is a fallback if there are no other topics being used since we wont be able to classify them
-        var unknownTopic = await dbContext.Topics.FirstOrDefaultAsync(t => t.Name == "unknown", cancellationToken);
-        if (unknownTopic == null)
-        {
-            unknownTopic = new Topic
-            {
-                Name = "unknown"
-            };
-            dbContext.Topics.Add(unknownTopic);
+            sw.Restart();
             await dbContext.SaveChangesAsync(cancellationToken);
+            sw.Stop();
+            _logger.LogTrace("Saved {count} posts for {topic} in {time}ms", posts.Count, topic.Name, sw.ElapsedMilliseconds);
+            
+            _logger.LogDebug("Processed {count} posts for {topic}, {over100} with score over 100", posts.Count, topic.Name, scoresOver100);
         }
 
-        var posts = dbContext.Posts.Where(p => p.SanitizedText != null && p.PostTopics.Count == 0)
-            .OrderByDescending(p => p.IndexedAt)
-            .Take(100).AsQueryable();
-
-        if (!posts.Any())
-        {
-            return;
-        }
-
-        var trackedTopics = await dbContext.Topics.ToListAsync(cancellationToken);
-        var classificationDict = new Dictionary<string, int>();
-        foreach (var post in posts)
-        {
-            // classify text
-            var topics = _classifier.ClassifyText(post.SanitizedText!);
-            post.PostTopics ??= new List<PostTopic>();
-
-            foreach (var topic in topics)
-            {
-                // avoid adding duplicate topic names
-                var trackedMatch = trackedTopics.FirstOrDefault(t => t.Name == topic.Topic.Name);
-                if (trackedMatch != null)
-                {
-                    topic.Topic = trackedMatch;
-                }
-                else
-                {
-                    trackedTopics.Add(topic.Topic);
-                }
-
-                post.PostTopics.Add(topic);
-
-                // increment classification count if score is 100 or higher
-                if (topic.Weight >= 100)
-                {
-                    classificationDict[topic.Topic.Name] = classificationDict.GetValueOrDefault(topic.Topic.Name) + 1;
-                }
-            }
-
-            if (post.PostTopics.Count == 0)
-            {
-                post.PostTopics.Add(new PostTopic
-                {
-                    Topic = unknownTopic,
-                    Weight = 100
-                });
-
-                classificationDict[unknownTopic.Name] = classificationDict.GetValueOrDefault(unknownTopic.Name) + 1;
-            }
-        }
-
-        foreach (var (topicName, count) in classificationDict)
-        {
-            _logger.LogInformation("Classified {count} posts into {topic}", count, topicName);
-        }
-        await dbContext.SaveChangesAsync(cancellationToken);
+        return processed;
     }
 
     public Task StopAsync(CancellationToken cancellationToken)

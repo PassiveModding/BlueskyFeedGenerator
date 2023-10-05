@@ -6,68 +6,58 @@ namespace Bluesky.Firehose.Classifiers;
 
 public class KeywordClassifier : IClassifier
 {
-    private readonly Dictionary<string, Keyword[]> keywordDict = new();
+    private readonly Keyword[] keywords;
     private readonly ILogger<KeywordClassifier> logger;
 
-    public KeywordClassifier(ILogger<KeywordClassifier> logger, Dictionary<string, Keyword[]>? keywordDict = null)
+    public KeywordClassifier(ILogger<KeywordClassifier> logger, Keyword[] keywords)
     {
         this.logger = logger;
-        if (keywordDict != null)
-        {
-            this.keywordDict = keywordDict;
-        }
-        else
-        {
-            InitKeywords();
-        }
+        this.keywords = keywords ?? throw new ArgumentNullException(nameof(keywords));
     }
 
-    private void InitKeywords()
+    public KeywordClassifier(ILogger<KeywordClassifier> logger, string keywordsFile)
     {
-        // load keywords csv files
-        var keywordFiles = Directory.GetFiles(Path.Combine(Directory.GetCurrentDirectory(), "keywords"), "*.csv");
-        foreach (var keywordFile in keywordFiles)
+        this.logger = logger;
+        this.keywords = GetKeywordsFromFile(keywordsFile).ToArray();
+    }
+
+    private static List<Keyword> GetKeywordsFromFile(string keywordsFile)
+    {
+        var keywordFile = Path.Combine(Directory.GetCurrentDirectory(), "keywords", keywordsFile);
+        var topic = Path.GetFileNameWithoutExtension(keywordFile);
+        var keywords = File.ReadAllLines(keywordFile);
+        var keywordList = new List<Keyword>();
+        foreach (var keyword in keywords)
         {
-            // skipping sanitized files, while they are probably better than the default they should be manually reviewed
-            if (keywordFile.EndsWith(".sanitized.csv"))
+            var parts = keyword.Split(',');
+            if (parts.Length != 2)
             {
                 continue;
             }
 
-            var topic = Path.GetFileNameWithoutExtension(keywordFile);
-            var keywords = File.ReadAllLines(keywordFile);
-            var keywordList = new List<Keyword>();
-            foreach (var keyword in keywords)
+            if (!int.TryParse(parts[1], out var weight))
             {
-                var parts = keyword.Split(',');
-                if (parts.Length != 2)
-                {
-                    logger.LogWarning("Invalid keyword: {keyword}", keyword);
-                    continue;
-                }
-
-                if (!int.TryParse(parts[1], out var weight))
-                {
-                    logger.LogWarning("Invalid keyword weight: {keyword}", keyword);
-                    continue;
-                }
-
-                var newKeyword = new Keyword(parts[0].Split('|'), weight);
-                // ensure no duplicate keywords
-                if (keywordList.Any(k => k.Keywords.SequenceEqual(newKeyword.Keywords)))
-                {
-                    logger.LogWarning("Duplicate keyword: {keyword}", keyword);
-                    continue;
-                }
-
-                keywordList.Add(newKeyword);
+                continue;
             }
 
-            keywordDict.Add(topic, keywordList.ToArray());
+            var newKeyword = new Keyword(parts[0].Split('|'), weight);
+            // ensure no duplicate keywords
+            if (keywordList.Any(k => k.Keywords.SequenceEqual(newKeyword.Keywords)))
+            {
+                continue;
+            }
+
+            keywordList.Add(newKeyword);
         }
+
+        return keywordList;
     }
 
-    // Keyword(string[] keywords, int weight)
+    public int GenerateScore(string sanitizedText)
+    {
+        return GenerateScore(keywords, sanitizedText);
+    }
+
     public static int GenerateScore(Keyword[] keywords, string sanitizedText)
     {
         var topics = new List<PostTopic>();
@@ -138,24 +128,5 @@ public class KeywordClassifier : IClassifier
         }
 
         return false;
-    }
-
-    public PostTopic[] ClassifyText(string sanitizedText)
-    {
-        var topics = new List<PostTopic>();
-        foreach (var (topic, keywords) in keywordDict)
-        {
-            var score = GenerateScore(keywords, sanitizedText);
-            topics.Add(new PostTopic
-            {
-                Topic = new Topic
-                {
-                    Name = topic
-                },
-                Weight = score
-            });
-        }
-
-        return topics.ToArray();
     }
 }

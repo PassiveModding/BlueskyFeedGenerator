@@ -4,11 +4,11 @@ namespace Firehose.Tests;
 
 public class DefaultSanitizerTests
 {
-    private readonly DefaultSanitizer sanitizer;
+    private readonly PostSanitizer sanitizer;
 
     public DefaultSanitizerTests()
     {
-        sanitizer = new DefaultSanitizer();
+        sanitizer = new PostSanitizer();
     }
 
     [Fact]
@@ -93,7 +93,7 @@ public class DefaultSanitizerTests
     {
         // this is to ensure our stopwords will still be useful after normalization
         var stopWords = sanitizer.GetStopWords().ToArray();
-        var newStopwords = stopWords.Select(s => DefaultSanitizer.Normalize(s));
+        var newStopwords = stopWords.Select(s => PostSanitizer.Normalize(s));
         // export for debugging
         File.WriteAllLines("stopwords_normalized.txt", newStopwords);
 

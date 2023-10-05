@@ -33,41 +33,6 @@ public class KeywordClassifierTests
     }
 
     [Fact]
-    public void ClassifyText_Should_Classify_Text_Correctly_With_Multiple_Keywords_And_Multiple_Topics()
-    {
-        var logger = new Mock<ILogger<KeywordClassifier>>();
-
-        var keywordDict = new Dictionary<string, Keyword[]>
-        {
-            {
-                "test",
-                new[]
-                {
-                    new Keyword(new[] {"test"}, 10),
-                    new Keyword(new[] {"this"}, 10)
-                }
-            },
-            {
-                "test2",
-                new[]
-                {
-                    new Keyword(new[] {"test"}, 10),
-                    new Keyword(new[] {"this"}, 10)
-                }
-            }
-        };
-
-        var classifier = new KeywordClassifier(logger.Object, keywordDict);
-
-        var text = "this is a test";
-        var result = classifier.ClassifyText(text);
-        Assert.Equal("test", result[0].Topic.Name);
-        Assert.Equal(20, result[0].Weight);
-        Assert.Equal("test2", result[1].Topic.Name);
-        Assert.Equal(20, result[1].Weight);
-    }
-
-    [Fact]
     public void ClassifyText_Should_Classify_Keyword_Only_Once()
     {
         var text = "test test test test";

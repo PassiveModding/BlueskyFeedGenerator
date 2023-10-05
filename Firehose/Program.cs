@@ -48,10 +48,23 @@ public class Program
 
                 services.AddHostedService<FirehoseListener>();
 
-                services.AddSingleton<ISanitizer, DefaultSanitizer>();
+                services.AddSingleton<ISanitizer, PostSanitizer>();
                 services.AddHostedService<PostProcessor>();
                 
-                services.AddSingleton<IClassifier, KeywordClassifier>();
+                services.AddSingleton<ClassifierFactory>(serviceProvider =>
+                {
+                    var logger = serviceProvider.GetRequiredService<ILogger<KeywordClassifier>>();
+                    var classifiers = new Dictionary<string, IClassifier>();
+                    var classifierFiles = Directory.GetFiles(Path.Combine(Directory.GetCurrentDirectory(), "keywords"), "*.csv");
+                    foreach (var classifierFile in classifierFiles)
+                    {
+                        var topic = Path.GetFileNameWithoutExtension(classifierFile);
+                        var classifier = new KeywordClassifier(logger, classifierFile);
+                        classifiers.Add(topic, classifier);
+                    }
+
+                    return new ClassifierFactory(classifiers);
+                });
                 services.AddHostedService<Classifier>();
             })
             .ConfigureLogging((hostContext, loggingBuilder) =>

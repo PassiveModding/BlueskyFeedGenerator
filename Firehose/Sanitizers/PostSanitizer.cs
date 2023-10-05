@@ -1,10 +1,9 @@
 using System.Text.RegularExpressions;
 using LemmaSharp;
-using Microsoft.Extensions.Logging;
 
 namespace Bluesky.Firehose.Sanitizers;
 
-public partial class DefaultSanitizer : ISanitizer
+public partial class PostSanitizer : ISanitizer
 {
     //[GeneratedRegex("[^a-zA-Z0-9 ]+")]
     //private static partial Regex Alphanumeric();
@@ -18,7 +17,7 @@ public partial class DefaultSanitizer : ISanitizer
     private readonly HashSet<string> _stopwords;
     private readonly ILemmatizer _lemmatizer;
 
-    public DefaultSanitizer(string[]? stopwords = null)
+    public PostSanitizer(string[]? stopwords = null)
     {
         _lemmatizer = InitLemmatizer();
         _stopwords = stopwords != null ? new HashSet<string>(stopwords) : InitStopwords();
