@@ -77,7 +77,7 @@ public class Program
                         feedDictionary.Add($"at://{config.PublisherDid}/app.bsky.feed.generator/{topic.Key}", feed);
                     }
 
-                    var feedFactory = new FeedFactory(logger, serviceProvider, feedDictionary);
+                    var feedFactory = new FeedFactory(feedDictionary);
 
                     return feedFactory;
                 });
