@@ -20,7 +20,7 @@ public class FirehoseListener : IHostedService
     private readonly IOptions<ServiceConfig> serviceConfig;
     private readonly CancellationTokenSource cancellationTokenSource = new();
     private int postCounter;
-    private readonly ConcurrentBag<SubscribedRepoEventArgs> eventQueue = new();
+    private ConcurrentQueue<SubscribedRepoEventArgs> eventQueue = new();
 
 
     public FirehoseListener(ILogger<FirehoseListener> logger, IServiceProvider serviceProvider, IOptions<ServiceConfig> serviceConfig)
@@ -38,8 +38,18 @@ public class FirehoseListener : IHostedService
             .Build();
 
         await client.Server.CreateSessionAsync(serviceConfig.Value.LoginIdentifier, serviceConfig.Value.Token, cancellationTokenSource.Token);
-        client.OnSubscribedRepoMessage += (o, e) => {
-            eventQueue.Add(e);
+        client.OnSubscribedRepoMessage += (o, e) => {                            
+            if (e.Message.Record?.Type == "app.bsky.feed.post")
+            {
+                eventQueue.Enqueue(e);
+            }
+            else if (e.Message.Record == null && e.Message.Commit != null && e.Message.Commit.Ops != null)
+            {
+                if (e.Message.Commit.Ops[0].Action == "delete")
+                {
+                    eventQueue.Enqueue(e);
+                }
+            }
         };
         client.OnConnectionUpdated += (o, e) => HandleConnectionUpdated(o, e, client);
         await client.StartSubscribeReposAsync();
@@ -49,49 +59,58 @@ public class FirehoseListener : IHostedService
         {
             while (!cancellationTokenSource.IsCancellationRequested)
             {
-                // take all events from the queue
-                var events = new List<SubscribedRepoEventArgs>();
-                while (eventQueue.TryTake(out var e))
+                var newQueue = new ConcurrentQueue<SubscribedRepoEventArgs>();
+                var oldQueue = Interlocked.Exchange(ref eventQueue, newQueue);
+
+
+                if (!oldQueue.IsEmpty)
                 {
-                    events.Add(e);
+                    _logger.LogInformation("Processing {count} events", oldQueue.Count);
+                }
+                else
+                {
+                    await Task.Delay(1000, cancellationToken);
+                    continue;
                 }
 
-                if (events.Count > 0)
-                {
-                    _logger.LogInformation("Processing {count} events", events.Count);
-                }
+                // for every 100 events, create a new scope and process them in parallel
+                var chunks = 100;
+                var tasks = new List<Task>();
 
-                var processing = Task.Run(async () => 
+                var cancel = new CancellationTokenSource();
+                while (!oldQueue.IsEmpty)
                 {
-                    using var scope = _serviceProvider.CreateScope();
-                    var db = scope.ServiceProvider.GetRequiredService<PostContext>();
-                    
-                    foreach (var e in events)
+                    var chunk = new List<SubscribedRepoEventArgs>();
+                    for (var i = 0; i < chunks; i++)
                     {
-                        try
+                        if (oldQueue.TryDequeue(out var e))
                         {
-                            if (e.Message.Record?.Type == "app.bsky.feed.post")
-                            {
-                                await HandlePost(db, e);
-                            }
-                            else if (e.Message.Record == null && e.Message.Commit != null && e.Message.Commit.Ops != null)
-                            {
-                                if (e.Message.Commit.Ops[0].Action == "delete")
-                                {
-                                    await DeletePost(db, e.Message.Commit!.Ops![0]);
-                                }
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, "Error handling event");
+                            chunk.Add(e);
                         }
                     }
-                    
-                    await db.SaveChangesAsync();
-                });
 
-                await Task.WhenAll(processing, Task.Delay(TimeSpan.FromSeconds(10), cancellationTokenSource.Token));
+                    tasks.Add(Task.Run(async () =>
+                    {
+                        using var scope = _serviceProvider.CreateScope();
+                        var db = scope.ServiceProvider.GetRequiredService<PostContext>();
+                        foreach (var e in chunk)
+                        {
+                            await HandleEvent(db, e, cancel.Token);
+                        }
+
+                        await db.SaveChangesAsync(cancel.Token);
+                    }, cancel.Token));
+                }
+
+                // max time to wait for all tasks to complete
+                var timeout = TimeSpan.FromSeconds(60);
+                var allTasks = Task.WhenAll(tasks);
+                var completed = await Task.WhenAny(allTasks, Task.Delay(timeout, cancellationToken));     
+                if (completed != allTasks)
+                {
+                    _logger.LogError("Timed out waiting for tasks to complete");
+                    cancel.Cancel();
+                }  
             }
         }, cancellationToken);
     }
@@ -122,9 +141,31 @@ public class FirehoseListener : IHostedService
         });
     }
 
-    private async Task HandlePost(PostContext db, SubscribedRepoEventArgs e)
+    private async Task HandleEvent(PostContext db, SubscribedRepoEventArgs e, CancellationToken cancellationToken)
     {
-        if (e.Message.Record?.Type != "app.bsky.feed.post" || e.Message.Record is not FishyFlip.Models.Post post)
+        try
+        {
+            if (e.Message.Record?.Type == "app.bsky.feed.post")
+            {
+                await HandlePost(db, e, cancellationToken);
+            }
+            else if (e.Message.Record == null && e.Message.Commit != null && e.Message.Commit.Ops != null)
+            {
+                if (e.Message.Commit.Ops[0].Action == "delete")
+                {
+                    await DeletePost(db, e.Message.Commit!.Ops![0], cancellationToken);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error handling event");
+        }
+    }
+
+    private async Task HandlePost(PostContext db, SubscribedRepoEventArgs e, CancellationToken cancellationToken)
+    {
+        if (e.Message.Record?.Type != "app.bsky.feed.post" || e.Message.Record is not Post post)
         {
             return;
         }
@@ -134,11 +175,11 @@ public class FirehoseListener : IHostedService
         {
             if (op.Action == "create")
             {
-                await CreatePost(db, e, op, post);
+                await CreatePost(db, e, op, post, cancellationToken);
             }
             else if (op.Action == "delete")
             {
-                await DeletePost(db, op);
+                await DeletePost(db, op, cancellationToken);
             }
         }
         catch (Exception ex)
@@ -147,7 +188,7 @@ public class FirehoseListener : IHostedService
         }
     }
 
-    private async Task CreatePost(PostContext db, SubscribedRepoEventArgs e, Ops op, FishyFlip.Models.Post post)
+    private async Task CreatePost(PostContext db, SubscribedRepoEventArgs e, Ops op, Post post, CancellationToken cancellationToken)
     {
         if (op.Path == null || op.Cid == null)
         {
@@ -178,7 +219,7 @@ public class FirehoseListener : IHostedService
         postCounter++;
     }
 
-    private async Task DeletePost(PostContext db, Ops op)
+    private async Task DeletePost(PostContext db, Ops op, CancellationToken cancellationToken)
     {
         if (op.Path == null || !op.Path!.Contains("posts/"))
         {
@@ -188,7 +229,7 @@ public class FirehoseListener : IHostedService
         try
         {
             // check if exists and delete if true, only return the cid
-            var cid = await db.Posts.Where(p => p.Path == op.Path).Select(p => p.Cid).FirstOrDefaultAsync();
+            var cid = await db.Posts.Where(p => p.Path == op.Path).Select(p => p.Cid).FirstOrDefaultAsync(cancellationToken);
             if (cid == null)
             {
                 return;
