@@ -51,7 +51,7 @@ public class Program
                 services.AddSingleton<ISanitizer, PostSanitizer>();
                 services.AddHostedService<PostProcessor>();
                 
-                services.AddSingleton<ClassifierFactory>(serviceProvider =>
+                services.AddSingleton(serviceProvider =>
                 {
                     var logger = serviceProvider.GetRequiredService<ILogger<KeywordClassifier>>();
                     var classifiers = new Dictionary<string, IClassifier>();
@@ -60,6 +60,7 @@ public class Program
                     {
                         var topic = Path.GetFileNameWithoutExtension(classifierFile);
                         var classifier = new KeywordClassifier(logger, classifierFile);
+                        logger.LogInformation("Loaded classifier for {topic}", topic);
                         classifiers.Add(topic, classifier);
                     }
 
