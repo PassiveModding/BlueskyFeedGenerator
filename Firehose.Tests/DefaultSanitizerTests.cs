@@ -18,7 +18,7 @@ public class DefaultSanitizerTests
     [Fact]
     public void Sanitize_Should_Return_Empty_String_When_Null()
     {
-        var result = sanitizer.Sanitize(null);
+        var result = sanitizer.Sanitize(null!);
 
         Assert.Equal("", result);
     }
