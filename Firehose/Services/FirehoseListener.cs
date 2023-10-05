@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net.WebSockets;
 using Bluesky.Common.Database;
 using FishyFlip;
@@ -19,7 +20,6 @@ public class FirehoseListener : IHostedService
     private readonly IServiceProvider _serviceProvider;
     private readonly IOptions<ServiceConfig> serviceConfig;
     private readonly CancellationTokenSource cancellationTokenSource = new();
-    private int postCounter;
     private ConcurrentQueue<SubscribedRepoEventArgs> eventQueue = new();
 
 
@@ -95,7 +95,24 @@ public class FirehoseListener : IHostedService
                         var db = scope.ServiceProvider.GetRequiredService<PostContext>();
                         foreach (var e in chunk)
                         {
-                            await HandleEvent(db, e, cancel.Token);
+                            try
+                            {
+                                if (e.Message.Record?.Type == "app.bsky.feed.post")
+                                {
+                                    await HandlePost(db, e, cancel.Token);
+                                }
+                                else if (e.Message.Record == null && e.Message.Commit != null && e.Message.Commit.Ops != null)
+                                {
+                                    if (e.Message.Commit.Ops[0].Action == "delete")
+                                    {
+                                        await DeletePost(db, e.Message.Commit!.Ops![0], cancel.Token);
+                                    }
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogError(ex, "Error handling event");
+                            }
                         }
 
                         await db.SaveChangesAsync(cancel.Token);
@@ -139,28 +156,6 @@ public class FirehoseListener : IHostedService
             await client.StartSubscribeReposAsync();
             _logger.LogInformation("Reconnected");
         });
-    }
-
-    private async Task HandleEvent(PostContext db, SubscribedRepoEventArgs e, CancellationToken cancellationToken)
-    {
-        try
-        {
-            if (e.Message.Record?.Type == "app.bsky.feed.post")
-            {
-                await HandlePost(db, e, cancellationToken);
-            }
-            else if (e.Message.Record == null && e.Message.Commit != null && e.Message.Commit.Ops != null)
-            {
-                if (e.Message.Commit.Ops[0].Action == "delete")
-                {
-                    await DeletePost(db, e.Message.Commit!.Ops![0], cancellationToken);
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error handling event");
-        }
     }
 
     private async Task HandlePost(PostContext db, SubscribedRepoEventArgs e, CancellationToken cancellationToken)
@@ -208,15 +203,15 @@ public class FirehoseListener : IHostedService
             IndexedAt = DateTime.UtcNow
         };
 
-        // check if exists by using the cid but don't return a value
-        var exists = await db.Posts.AnyAsync(p => p.Cid == op.Cid.ToString());
+        // check if exists and return if true
+        var pkCompare = uri.ToString();
+        var exists = await db.Posts.AnyAsync(p => p.Uri == pkCompare, cancellationToken);
         if (exists)
         {
             return;
         }
 
-        await db.Posts.AddAsync(p);
-        postCounter++;
+        await db.Posts.AddAsync(p, cancellationToken);
     }
 
     private async Task DeletePost(PostContext db, Ops op, CancellationToken cancellationToken)
