@@ -1,4 +1,8 @@
+using Bluesky.Firehose.Classifiers;
+using Bluesky.Firehose.Models;
 using Bluesky.Firehose.Sanitizers;
+using Microsoft.Extensions.Logging;
+using Moq;
 
 namespace Firehose.Tests;
 
@@ -115,6 +119,58 @@ public class DefaultSanitizerTests
         for (int i = 0; i < stopWords.Length; i++)
         {
             Assert.Equal(stopWords[i], newStopwords.ElementAt(i));
+        }
+    }
+
+    [Fact]
+    public void Normalize_Should_Not_Affect_Key_Words()
+    {
+        // this is to ensure our keywords will still be useful after normalization
+        var classifierFiles = Directory.GetFiles(Path.Combine(Directory.GetCurrentDirectory(), "keywords"), "*.csv");
+        var logger = new Mock<ILogger<KeywordClassifier>>();
+        foreach (var file in classifierFiles)
+        {
+            // create keywordClassifier
+            var keywordClassifier = new KeywordClassifier(logger.Object, file);
+            var keyWords = keywordClassifier.GetKeywords().ToArray();
+
+            // keyword = Keyword(string[] terms, int weight)
+            var newKeywords = keyWords.Select(k => new Keyword(k.Keywords.Select(s => PostSanitizer.Normalize(s)).ToArray(), k.Weight));
+            // export for debugging
+            File.WriteAllLines(Path.GetFileNameWithoutExtension(file) + "_normalized.txt", newKeywords.Select(k => $"{string.Join("|", k.Keywords)},{k.Weight}"));
+
+            for (int i = 0; i < keyWords.Length; i++)
+            {
+                var expected = string.Join("|", keyWords[i].Keywords);
+                var actual = string.Join("|", newKeywords.ElementAt(i).Keywords);
+                Assert.Equal(expected, actual);
+            }
+        }
+    }
+
+    [Fact]
+    public void Lemmatize_Should_Not_Affect_Key_Words()
+    {
+        // this is to ensure our keywords will still be useful after normalization
+        var classifierFiles = Directory.GetFiles(Path.Combine(Directory.GetCurrentDirectory(), "keywords"), "*.csv");
+        var logger = new Mock<ILogger<KeywordClassifier>>();
+        foreach (var file in classifierFiles)
+        {
+            // create keywordClassifier
+            var keywordClassifier = new KeywordClassifier(logger.Object, file);
+            var keyWords = keywordClassifier.GetKeywords().ToArray();
+
+            // keyword = Keyword(string[] terms, int weight)
+            var newKeywords = keyWords.Select(k => new Keyword(k.Keywords.Select(s => sanitizer.Lemmatize(s)).ToArray(), k.Weight));
+            // export for debugging
+            File.WriteAllLines(Path.GetFileNameWithoutExtension(file) + "_lemmatized.txt", newKeywords.Select(k => $"{string.Join("|", k.Keywords)},{k.Weight}"));
+
+            for (int i = 0; i < keyWords.Length; i++)
+            {
+                var expected = string.Join("|", keyWords[i].Keywords);
+                var actual = string.Join("|", newKeywords.ElementAt(i).Keywords);
+                Assert.Equal(expected, actual);
+            }
         }
     }
 }

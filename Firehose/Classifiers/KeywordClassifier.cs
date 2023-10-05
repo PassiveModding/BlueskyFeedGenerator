@@ -7,6 +7,12 @@ namespace Bluesky.Firehose.Classifiers;
 public class KeywordClassifier : IClassifier
 {
     private readonly Keyword[] keywords;
+
+    public IEnumerable<Keyword> GetKeywords()
+    {
+        return keywords;
+    }
+
     private readonly ILogger<KeywordClassifier> logger;
 
     public KeywordClassifier(ILogger<KeywordClassifier> logger, Keyword[] keywords)
