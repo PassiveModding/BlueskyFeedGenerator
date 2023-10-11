@@ -5,10 +5,8 @@ namespace Bluesky.Firehose.Sanitizers;
 
 public partial class TextSanitizer : ISanitizer
 {
-    //[GeneratedRegex("[^a-zA-Z0-9 ]+")]
-    //private static partial Regex Alphanumeric();
-
-    [GeneratedRegex("[\\p{P}^+$]+")]
+    // exclude / from punctuation
+    [GeneratedRegex("[\\p{P}^+$/]+")]
     private static partial Regex Punctuation();
 
     [GeneratedRegex("\\s+")]
@@ -51,6 +49,10 @@ public partial class TextSanitizer : ISanitizer
         {
             return "";
         }
+
+        // extra punctuation rules
+        // / -> space
+        input = input.Replace("/", " ");
 
         input = Punctuation().Replace(input, "");
         input = DuplicateSpaces().Replace(input, " ");
