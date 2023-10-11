@@ -21,22 +21,21 @@ public class FirehoseListener : IHostedService
     private readonly IOptions<ServiceConfig> serviceConfig;
     private readonly CancellationTokenSource cancellationTokenSource = new();
     private ConcurrentQueue<SubscribedRepoEventArgs> eventQueue = new();
-
+    private readonly ATProtocol client;
 
     public FirehoseListener(ILogger<FirehoseListener> logger, IServiceProvider serviceProvider, IOptions<ServiceConfig> serviceConfig)
     {
         _logger = logger;
         _serviceProvider = serviceProvider;
         this.serviceConfig = serviceConfig;
+        client = new ATProtocolBuilder()
+            .EnableAutoRenewSession(true)
+            .WithInstanceUrl(new Uri(serviceConfig.Value.Url))
+            .Build();
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        using var client = new ATProtocolBuilder()
-            .EnableAutoRenewSession(true)
-            .WithInstanceUrl(new Uri(serviceConfig.Value.Url))
-            .Build();
-
         await client.Server.CreateSessionAsync(serviceConfig.Value.LoginIdentifier, serviceConfig.Value.Token, cancellationTokenSource.Token);
         client.OnSubscribedRepoMessage += (o, e) => {                            
             if (e.Message.Record?.Type == "app.bsky.feed.post")
@@ -60,13 +59,23 @@ public class FirehoseListener : IHostedService
 
     private async Task ProcessLoop(CancellationToken cancellationToken)
     {
+        _logger.LogInformation("Starting event processing loop");
         var loggingInterval = TimeSpan.FromSeconds(30);
         var processingTimeout = TimeSpan.FromSeconds(30);
         var lastLogTime = DateTime.UtcNow;
+        var lastEventTime = DateTime.UtcNow;
         var eventCount = 0;
 
         while (!cancellationTokenSource.IsCancellationRequested)
         {
+            if (DateTime.UtcNow - lastEventTime >= TimeSpan.FromMinutes(1))
+            {
+                _logger.LogInformation("No events received in the last minute. Reconnecting");
+                await Reconnect(client);
+                // reset the last event time so we don't reconnect again
+                lastEventTime = DateTime.UtcNow;
+            }
+
             var newQueue = new ConcurrentQueue<SubscribedRepoEventArgs>();
             var oldQueue = Interlocked.Exchange(ref eventQueue, newQueue);
 
@@ -132,7 +141,11 @@ public class FirehoseListener : IHostedService
             {
                 _logger.LogError("Timed out waiting for tasks to complete");
                 cancel.Cancel();
-            } 
+            }
+            else
+            {
+                lastEventTime = DateTime.UtcNow;
+            }
 
             if (DateTime.UtcNow - lastLogTime >= loggingInterval)
             {
@@ -141,6 +154,8 @@ public class FirehoseListener : IHostedService
                 eventCount = 0;
             } 
         }
+
+        _logger.LogInformation("Cancellation requested. Waiting for tasks to complete");
     }
 
     private void HandleConnectionUpdated(object? sender, SubscriptionConnectionStatusEventArgs e, ATProtocol client)
@@ -154,19 +169,27 @@ public class FirehoseListener : IHostedService
         _logger.LogInformation("Connection closed. Will try reconnecting");
         Task.Run(async () =>
         {
-            try
-            {
-                await client.StopSubscriptionAsync();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error stopping subscription");
-            }
-
-            await client.Server.CreateSessionAsync(serviceConfig.Value.LoginIdentifier, serviceConfig.Value.Token);
-            await client.StartSubscribeReposAsync();
-            _logger.LogInformation("Reconnected");
+            await Task.Delay(TimeSpan.FromSeconds(5));
+            await Reconnect(client);
         });
+    }
+
+    private async Task Reconnect(ATProtocol client)
+    {
+        _logger.LogInformation("Attempting to reconnect");
+
+        try
+        {
+            await client.StopSubscriptionAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error stopping subscription");
+        }
+
+        await client.Server.CreateSessionAsync(serviceConfig.Value.LoginIdentifier, serviceConfig.Value.Token);
+        await client.StartSubscribeReposAsync();
+        _logger.LogInformation("Reconnected");
     }
 
     private async Task HandlePost(PostContext db, SubscribedRepoEventArgs e, CancellationToken cancellationToken)
