@@ -46,7 +46,7 @@ public class Program
                     options.UseNpgsql(hostContext.Configuration.GetConnectionString("DefaultConnection"));
                 });
 
-                services.AddHostedService<FirehoseListener>();
+                services.AddHostedService<FirehoseService>();
 
                 services.AddSingleton<ISanitizer, TextSanitizer>();
                 services.AddHostedService<PostSanitizer>();
