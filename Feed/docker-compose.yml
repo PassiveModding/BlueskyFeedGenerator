@@ -4,11 +4,9 @@ services:
   bsky:
     image: bsky-feed
     build:
-      context: .
-      dockerfile: dockerfile
+      context: ..
+      dockerfile: ./Feed/dockerfile
     ports:
       - 5000:80
     volumes:
-      - ./appsettings.json:/App/appsettings.json
-      - ./bsky.db:/App/bsky.db
-      - ./Keywords:/App/Keywords
+      - ./Feed/appsettings.json:/App/appsettings.json

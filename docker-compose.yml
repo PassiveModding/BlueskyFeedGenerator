@@ -2,14 +2,14 @@ version: '3.4'
 
 services:
   firehose:
-    image: firehose
+    image: bsky-firehose
     build:
       context: .
       dockerfile: ./Firehose/dockerfile
     volumes:
       - ./Firehose/appsettings.json:/app/appsettings.json
   feed:
-    image: feed
+    image: bsky-feed
     build:
       context: .
       dockerfile: ./Feed/dockerfile
