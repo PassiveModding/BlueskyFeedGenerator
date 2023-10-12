@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Diagnostics;
 using System.Net.WebSockets;
 using Bluesky.Common.Database;
 using FishyFlip;
@@ -19,9 +18,23 @@ public class FirehoseListener : IHostedService
     private readonly ILogger<FirehoseListener> _logger;
     private readonly IServiceProvider _serviceProvider;
     private readonly IOptions<ServiceConfig> serviceConfig;
-    private readonly CancellationTokenSource cancellationTokenSource = new();
     private ConcurrentQueue<SubscribedRepoEventArgs> eventQueue = new();
     private readonly ATProtocol client;
+
+    // The amount of events to process per db transaction
+    const int EventChunkSize = 100;
+
+    // The amount of time to wait for events to process before timing out
+    private readonly TimeSpan ProcessingTimeout = TimeSpan.FromSeconds(30);
+
+    // The amount of time to wait before logging the amount of events processed
+    private readonly TimeSpan LoggingInterval = TimeSpan.FromSeconds(30);
+
+    // The amount of time to wait before reconnecting if no events are received
+    private readonly TimeSpan LastEventTimeout = TimeSpan.FromMinutes(1);
+
+    // The amount of time to wait before reconnecting if the connection is closed
+    private readonly TimeSpan ReconnectDelay = TimeSpan.FromSeconds(5);
 
     public FirehoseListener(ILogger<FirehoseListener> logger, IServiceProvider serviceProvider, IOptions<ServiceConfig> serviceConfig)
     {
@@ -36,7 +49,7 @@ public class FirehoseListener : IHostedService
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        await client.Server.CreateSessionAsync(serviceConfig.Value.LoginIdentifier, serviceConfig.Value.Token, cancellationTokenSource.Token);
+        await client.Server.CreateSessionAsync(serviceConfig.Value.LoginIdentifier, serviceConfig.Value.Token, cancellationToken);
         client.OnSubscribedRepoMessage += (o, e) => {                            
             if (e.Message.Record?.Type == "app.bsky.feed.post")
             {
@@ -60,17 +73,15 @@ public class FirehoseListener : IHostedService
     private async Task ProcessLoop(CancellationToken cancellationToken)
     {
         _logger.LogInformation("Starting event processing loop");
-        var loggingInterval = TimeSpan.FromSeconds(30);
-        var processingTimeout = TimeSpan.FromSeconds(30);
         var lastLogTime = DateTime.UtcNow;
         var lastEventTime = DateTime.UtcNow;
         var eventCount = 0;
 
-        while (!cancellationTokenSource.IsCancellationRequested)
+        while (!cancellationToken.IsCancellationRequested)
         {
-            if (DateTime.UtcNow - lastEventTime >= TimeSpan.FromMinutes(1))
+            if (DateTime.UtcNow - lastEventTime >= LastEventTimeout)
             {
-                _logger.LogInformation("No events received in the last minute. Reconnecting");
+                _logger.LogInformation("No events received in the last {timeout} minutes. Reconnecting", LastEventTimeout.TotalMinutes);
                 await Reconnect(client);
                 // reset the last event time so we don't reconnect again
                 lastEventTime = DateTime.UtcNow;
@@ -90,14 +101,13 @@ public class FirehoseListener : IHostedService
             }
 
             // for every 100 events, create a new scope and process them in parallel
-            var chunks = 100;
             var tasks = new List<Task>();
 
             var cancel = new CancellationTokenSource();
             while (!oldQueue.IsEmpty)
             {
                 var chunk = new List<SubscribedRepoEventArgs>();
-                for (var i = 0; i < chunks; i++)
+                for (var i = 0; i < EventChunkSize; i++)
                 {
                     if (oldQueue.TryDequeue(out var e))
                     {
@@ -136,7 +146,7 @@ public class FirehoseListener : IHostedService
             }
 
             var allTasks = Task.WhenAll(tasks);
-            var completed = await Task.WhenAny(allTasks, Task.Delay(processingTimeout, cancellationToken));     
+            var completed = await Task.WhenAny(allTasks, Task.Delay(ProcessingTimeout, cancellationToken));     
             if (completed != allTasks)
             {
                 _logger.LogError("Timed out waiting for tasks to complete");
@@ -147,9 +157,9 @@ public class FirehoseListener : IHostedService
                 lastEventTime = DateTime.UtcNow;
             }
 
-            if (DateTime.UtcNow - lastLogTime >= loggingInterval)
+            if (DateTime.UtcNow - lastLogTime >= LoggingInterval)
             {
-                _logger.LogInformation("Processed {count} events in the last {interval} seconds", eventCount, loggingInterval.TotalSeconds);
+                _logger.LogInformation("Processed {count} events in the last {interval} seconds", eventCount, LoggingInterval.TotalSeconds);
                 lastLogTime = DateTime.UtcNow;
                 eventCount = 0;
             } 
@@ -169,7 +179,7 @@ public class FirehoseListener : IHostedService
         _logger.LogInformation("Connection closed. Will try reconnecting");
         Task.Run(async () =>
         {
-            await Task.Delay(TimeSpan.FromSeconds(5));
+            await Task.Delay(ReconnectDelay);
             await Reconnect(client);
         });
     }
@@ -276,7 +286,6 @@ public class FirehoseListener : IHostedService
 
     public Task StopAsync(CancellationToken cancellationToken)
     {
-        cancellationTokenSource.Cancel();
         return Task.CompletedTask;
     }
 }
