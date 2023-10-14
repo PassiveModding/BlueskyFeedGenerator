@@ -9,4 +9,4 @@ services:
     ports:
       - 5000:80
     volumes:
-      - ./Feed/appsettings.json:/App/appsettings.json
+      - ./appsettings.json:/App/appsettings.json

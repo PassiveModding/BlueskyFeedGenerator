@@ -7,4 +7,4 @@ services:
       context: ..
       dockerfile: ./Firehose/dockerfile
     volumes:
-      - ./Firehose/appsettings.json:/app/appsettings.json
+      - ./appsettings.json:/app/appsettings.json
