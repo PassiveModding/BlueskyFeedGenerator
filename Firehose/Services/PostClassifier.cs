@@ -91,16 +91,18 @@ namespace Bluesky.Firehose.Services
 
                 var sw = Stopwatch.StartNew();
                 // get only post text and id
-                var posts = await dbContext.Posts.Where(p => p.SanitizedText != null && !p.PostTopics.Any(pt => pt.TopicId == topic.Name))
+                var posts = await dbContext.Posts
+                    .Where(p => p.SanitizedText != null && !p.PostTopics.Any(pt => pt.Topic.Name == topic.Name))
                     .OrderByDescending(p => p.IndexedAt)
-                    .Take(batchSize)
                     .Select(p => new
                     {
                         p.Uri,
                         p.SanitizedText,
                         p.Text
                     })
+                    .Take(batchSize)
                     .ToListAsync(cancellationToken);
+
                 sw.Stop();
                 _logger.LogTrace("Retrieved {count} posts for {topic} in {time}ms", posts.Count, topic.Name, sw.ElapsedMilliseconds);
 
