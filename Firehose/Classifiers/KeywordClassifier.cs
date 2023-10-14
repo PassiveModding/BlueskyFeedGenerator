@@ -6,28 +6,38 @@ namespace Bluesky.Firehose.Classifiers;
 
 public class KeywordClassifier : IClassifier
 {
-    private readonly Keyword[] keywords;
+    private readonly Keyword[] _keywords;
 
     public IEnumerable<Keyword> GetKeywords()
     {
-        return keywords;
+        return _keywords;
     }
 
-    private readonly ILogger<KeywordClassifier> logger;
+    private readonly ILogger<KeywordClassifier>? _logger;
 
     public KeywordClassifier(ILogger<KeywordClassifier> logger, Keyword[] keywords)
     {
-        this.logger = logger;
-        this.keywords = keywords ?? throw new ArgumentNullException(nameof(keywords));
+        _logger = logger;
+        _keywords = keywords ?? throw new ArgumentNullException(nameof(keywords));
     }
 
     public KeywordClassifier(ILogger<KeywordClassifier> logger, string keywordsFile)
     {
-        this.logger = logger;
-        this.keywords = GetKeywordsFromFile(keywordsFile).ToArray();
+        _logger = logger;
+        _keywords = GetKeywordsFromFile(keywordsFile).ToArray();
     }
 
-    private static List<Keyword> GetKeywordsFromFile(string keywordsFile)
+    public KeywordClassifier(string keywordsFile)
+    {
+        _keywords = GetKeywordsFromFile(keywordsFile).ToArray();
+    }
+
+    public KeywordClassifier(Keyword[] keywords)
+    {
+        _keywords = keywords ?? throw new ArgumentNullException(nameof(keywords));
+    }
+
+    private List<Keyword> GetKeywordsFromFile(string keywordsFile)
     {
         var keywordFile = Path.Combine(Directory.GetCurrentDirectory(), "keywords", keywordsFile);
         var topic = Path.GetFileNameWithoutExtension(keywordFile);
@@ -50,6 +60,7 @@ public class KeywordClassifier : IClassifier
             // ensure no duplicate keywords
             if (keywordList.Any(k => k.Keywords.SequenceEqual(newKeyword.Keywords)))
             {
+                _logger?.LogWarning("Duplicate keyword {keyword} found in {topic}", keyword, topic);
                 continue;
             }
 
@@ -61,7 +72,7 @@ public class KeywordClassifier : IClassifier
 
     public int GenerateScore(string sanitizedText)
     {
-        return GenerateScore(keywords, sanitizedText);
+        return GenerateScore(_keywords, sanitizedText);
     }
 
     public static int GenerateScore(Keyword[] keywords, string sanitizedText)
