@@ -18,6 +18,7 @@ namespace Bluesky.Common.Database
         {
             modelBuilder.Entity<Post>().HasKey(x => x.Uri);
             modelBuilder.Entity<Post>().HasIndex(x => x.Path); 
+            modelBuilder.Entity<Post>().HasIndex(x => x.IndexedAt);
             // ignore blob for now
             modelBuilder.Entity<Post>().Ignore(x => x.Blob);
 
