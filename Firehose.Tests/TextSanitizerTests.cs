@@ -1,16 +1,14 @@
 using Bluesky.Firehose.Classifiers;
 using Bluesky.Firehose.Models;
 using Bluesky.Firehose.Sanitizers;
-using Microsoft.Extensions.Logging;
-using Moq;
 
 namespace Firehose.Tests;
 
-public class DefaultSanitizerTests
+public class TextSanitizerTests
 {
     private readonly TextSanitizer sanitizer;
 
-    public DefaultSanitizerTests()
+    public TextSanitizerTests()
     {
         sanitizer = new TextSanitizer();
     }
@@ -127,11 +125,10 @@ public class DefaultSanitizerTests
     {
         // this is to ensure our keywords will still be useful after normalization
         var classifierFiles = Directory.GetFiles(Path.Combine(Directory.GetCurrentDirectory(), "keywords"), "*.csv");
-        var logger = new Mock<ILogger<KeywordClassifier>>();
         foreach (var file in classifierFiles)
         {
             // create keywordClassifier
-            var keywordClassifier = new KeywordClassifier(logger.Object, file);
+            var keywordClassifier = new KeywordClassifier(file);
             var keyWords = keywordClassifier.GetKeywords().ToArray();
 
             // keyword = Keyword(string[] terms, int weight)
@@ -153,11 +150,10 @@ public class DefaultSanitizerTests
     {
         // this is to ensure our keywords will still be useful after normalization
         var classifierFiles = Directory.GetFiles(Path.Combine(Directory.GetCurrentDirectory(), "keywords"), "*.csv");
-        var logger = new Mock<ILogger<KeywordClassifier>>();
         foreach (var file in classifierFiles)
         {
             // create keywordClassifier
-            var keywordClassifier = new KeywordClassifier(logger.Object, file);
+            var keywordClassifier = new KeywordClassifier(file);
             var keyWords = keywordClassifier.GetKeywords().ToArray();
 
             // keyword = Keyword(string[] terms, int weight)
