@@ -1,7 +1,5 @@
 using Bluesky.Firehose.Classifiers;
 using Bluesky.Firehose.Models;
-using Microsoft.Extensions.Logging;
-using Moq;
 
 namespace Firehose.Tests;
 
