@@ -1,6 +1,9 @@
 using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using Bluesky.Common.Database;
+using Bluesky.Common.Models;
+using Bluesky.Firehose.Classifiers;
+using Bluesky.Firehose.Sanitizers;
 using FishyFlip;
 using FishyFlip.Events;
 using FishyFlip.Models;
@@ -9,7 +12,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Newtonsoft.Json;
 
 namespace Bluesky.Firehose.Services;
 
@@ -18,9 +20,12 @@ public class FirehoseService : BackgroundService
     private readonly ILogger<FirehoseService> _logger;
     private readonly IServiceProvider _serviceProvider;
     private readonly IOptions<ServiceConfig> _serviceConfig;
+    private readonly IOptions<FirehoseConfig> firehoseConfig;
+    private readonly ISanitizer sanitizer;
+    private readonly ClassifierFactory classifierFactory;
     private ConcurrentQueue<SubscribedRepoEventArgs> eventQueue = new();
     private static SemaphoreSlim reconnectSemaphore = new SemaphoreSlim(1, 1);
-    private readonly ATProtocol client;
+    private ATProtocol client;
 
     // Configuration options
     private readonly int EventChunkSize = 100;
@@ -29,11 +34,14 @@ public class FirehoseService : BackgroundService
     private readonly TimeSpan LastEventTimeout = TimeSpan.FromMinutes(1);
     private readonly TimeSpan ReconnectDelay = TimeSpan.FromSeconds(5);
 
-    public FirehoseService(ILogger<FirehoseService> logger, IServiceProvider serviceProvider, IOptions<ServiceConfig> serviceConfig)
+    public FirehoseService(ILogger<FirehoseService> logger, IServiceProvider serviceProvider, IOptions<ServiceConfig> serviceConfig, IOptions<FirehoseConfig> firehoseConfig, ISanitizer sanitizer, ClassifierFactory classifierFactory)
     {
         _logger = logger;
         _serviceProvider = serviceProvider;
         _serviceConfig = serviceConfig;
+        this.firehoseConfig = firehoseConfig;
+        this.sanitizer = sanitizer;
+        this.classifierFactory = classifierFactory;
         client = new ATProtocolBuilder()
             .EnableAutoRenewSession(true)
             .WithInstanceUrl(new Uri(serviceConfig.Value.Url))
@@ -114,7 +122,19 @@ public class FirehoseService : BackgroundService
             try
             {
                 await client.StopSubscriptionAsync(cancellationToken);
+                client.OnSubscribedRepoMessage -= HandleSubscribedRepoMessage;
+                client.OnConnectionUpdated -= (sender, e) => HandleConnectionUpdated(sender, e, cancellationToken);
+                client.Dispose();
+                // replace client with a new instance
+                client = new ATProtocolBuilder()
+                    .EnableAutoRenewSession(true)
+                    .WithInstanceUrl(new Uri(_serviceConfig.Value.Url))
+                    .Build();
+
                 await client.Server.CreateSessionAsync(_serviceConfig.Value.LoginIdentifier, _serviceConfig.Value.Token, cancellationToken);
+                client.OnSubscribedRepoMessage += HandleSubscribedRepoMessage;
+                client.OnConnectionUpdated += (sender, e) => HandleConnectionUpdated(sender, e, cancellationToken);
+
                 await client.StartSubscribeReposAsync(cancellationToken);
                 _logger.LogInformation("Reconnected");
                 break;
@@ -134,24 +154,6 @@ public class FirehoseService : BackgroundService
         }
     }
 
-    private async Task Reconnect(CancellationToken cancellationToken)
-    {
-        _logger.LogInformation("Attempting to reconnect");
-
-        try
-        {
-            await client.StopSubscriptionAsync(cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error stopping subscription");
-        }
-
-        await client.Server.CreateSessionAsync(_serviceConfig.Value.LoginIdentifier, _serviceConfig.Value.Token, cancellationToken);
-        await client.StartSubscribeReposAsync(cancellationToken);
-        _logger.LogInformation("Reconnected");
-    }
-
     private async Task ProcessLoop(CancellationToken cancellationToken)
     {
         _logger.LogInformation("Starting event processing loop");
@@ -164,7 +166,7 @@ public class FirehoseService : BackgroundService
             if (DateTime.UtcNow - lastEventTime >= LastEventTimeout)
             {
                 _logger.LogInformation("No events received in the last {timeout} minutes. Reconnecting", LastEventTimeout.TotalMinutes);
-                await Reconnect(cancellationToken);
+                await SafeReconnect(cancellationToken);
                 // reset the last event time so we don't reconnect again
                 lastEventTime = DateTime.UtcNow;
             }
@@ -235,7 +237,7 @@ public class FirehoseService : BackgroundService
         {
             try
             {
-                if (e.Message.Record?.Type == "app.bsky.feed.post" && e.Message.Record is Post post)
+                if (e.Message.Record?.Type == "app.bsky.feed.post" && e.Message.Record is FishyFlip.Models.Post post)
                 {
                     var op = e.Message.Commit!.Ops![0];
 
@@ -274,7 +276,7 @@ public class FirehoseService : BackgroundService
         }
     }
 
-    private async Task CreatePost(PostContext db, SubscribedRepoEventArgs e, Ops op, Post post, CancellationToken cancellationToken)
+    private async Task CreatePost(PostContext db, SubscribedRepoEventArgs e, Ops op, FishyFlip.Models.Post post, CancellationToken cancellationToken)
     {
         if (op.Path == null || op.Cid == null)
         {
@@ -285,26 +287,54 @@ public class FirehoseService : BackgroundService
 
         var userDid = e.Message.Commit!.Repo!;
         var uri = ATUri.Create($"at://{userDid}/{op.Path!}");
+        var uriSring = uri.ToString();
+        var exists = await db.Posts.AnyAsync(p => p.Uri == uriSring, cancellationToken);
+        if (exists)
+        {
+            return;
+        }
+
+        // filter langs on firehoseConfig.languages
+        if (post.Langs != null && post.Langs.Length > 0)
+        {
+            // if langs doesn't contain any of the languages in the config, skip
+            if (!post.Langs.Any(l => firehoseConfig.Value.Languages.Contains(l)))
+            {
+                return;
+            }
+        }
+
         var p = new Common.Models.Post
         {
             Uri = uri.ToString(),
             Cid = op.Cid!,
             Path = op.Path!.ToString()!,
             Text = post.Text,
-            Langs = post.Langs?.Length > 0 ? string.Join(",", post.Langs) : null,
-            Blob = JsonConvert.SerializeObject(e),
+            Languages = post.Langs ?? Array.Empty<string>(),
             IndexedAt = DateTime.UtcNow
         };
 
-        // check if exists and return if true
-        var pkCompare = uri.ToString();
-        var exists = await db.Posts.AnyAsync(p => p.Uri == pkCompare, cancellationToken);
-        if (exists)
+        // sanitize post
+        p.SanitizedText = sanitizer.Sanitize(p.Text!);
+        if (string.IsNullOrWhiteSpace(p.SanitizedText))
         {
             return;
         }
+        
+        foreach (var (topic, classifier) in classifierFactory.GetClassifiers())
+        {
+            var topicWeight = classifier.GenerateScore(p.SanitizedText!);
+            var postTopic = new PostTopic
+            {
+                PostId = p.Uri,
+                TopicId = topic,
+                Weight = topicWeight
+            };
+            db.PostTopics.Add(postTopic);
+        }
 
-        await db.Posts.AddAsync(p, cancellationToken);
+
+        db.Posts.Add(p);
     }
 
     private async Task DeletePost(PostContext db, Ops op, CancellationToken cancellationToken)

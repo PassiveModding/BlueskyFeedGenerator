@@ -41,15 +41,14 @@ public class Program
             .ConfigureServices((hostContext, services) =>
             {
                 services.Configure<ServiceConfig>(hostContext.Configuration.GetSection("Service"));
+                services.Configure<FirehoseConfig>(hostContext.Configuration.GetSection("Firehose"));
                 services.AddDbContext<PostContext>(options =>
                 {
                     options.UseNpgsql(hostContext.Configuration.GetConnectionString("DefaultConnection"));
                 });
 
-                services.AddHostedService<FirehoseService>();
-
                 services.AddSingleton<ISanitizer, TextSanitizer>();
-                services.AddHostedService<PostSanitizer>();
+                services.AddHostedService<FirehoseService>();
                 
                 services.AddSingleton(serviceProvider =>
                 {

@@ -9,6 +9,8 @@ using Microsoft.Extensions.Logging;
 
 namespace Bluesky.Firehose.Services
 {
+    // Used to classify existing posts for new topics that have been added.
+    // This is a background service that runs continuously.
     public class PostClassifier : BackgroundService
     {
         private readonly ILogger<PostClassifier> _logger;
@@ -37,25 +39,37 @@ namespace Bluesky.Firehose.Services
                 try
                 {
                     var cancel = new CancellationTokenSource();
-                    var processed = ProcessPosts(BatchSize, cancel.Token);
-                    var delayTask = Task.Delay(processingTimeout, cancellationToken);
-
-                    // if processing does not complete before the delay, cancel it
-                    var completedTask = await Task.WhenAny(processed, delayTask);
-                    if (completedTask == delayTask)
+                    
+                    string[] topics;
+                    using (var scope = _serviceProvider.CreateScope())
                     {
-                        cancel.Cancel();
-                        _logger.LogInformation("Processing posts took longer than {processingInterval}, cancelling", processingTimeout);
+                        var dbContext = scope.ServiceProvider.GetRequiredService<PostContext>();
+                        topics = await dbContext.Topics.Select(x => x.Name).ToArrayAsync(cancellationToken);
+                        _logger.LogInformation("Classifying topics {string}", string.Join(", ", topics));
                     }
-                    else
+                    
+                    foreach (var topicName in topics)
                     {
-                        var postCount = await processed;
-                        var posts = postCount.Sum();
-                        processedCount += posts;
-                        if (posts == 0)
+                        var processed = ClassifyPosts(BatchSize, topicName, cancel.Token);
+                        var delayTask = Task.Delay(processingTimeout, cancellationToken);
+
+                        // if processing does not complete before the delay, cancel it
+                        var completedTask = await Task.WhenAny(processed, delayTask);
+                        if (completedTask == delayTask)
                         {
-                            await Task.Delay(TimeSpan.FromSeconds(5), _cancellationTokenSource.Token);
+                            cancel.Cancel();
+                            _logger.LogInformation("Classifying posts took longer than {processingInterval}, cancelling", processingTimeout);
                         }
+                        else
+                        {
+                            var postCount = await processed;
+                            processedCount += postCount;
+                        }
+                    }
+
+                    if (processedCount == 0)
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
                     }
 
                     if (DateTime.UtcNow - lastLogTime > loggingInterval)
@@ -72,74 +86,66 @@ namespace Bluesky.Firehose.Services
             }
         }
 
-        private async Task<int[]> ProcessPosts(int batchSize, CancellationToken cancellationToken)
+        private async Task<int> ClassifyPosts(int batchSize, string topicName, CancellationToken cancellationToken)
         {
             using var scope = _serviceProvider.CreateScope();
             var dbContext = scope.ServiceProvider.GetRequiredService<PostContext>();
-            var topics = await dbContext.Topics.ToListAsync(cancellationToken);
-
-            int[] processed = new int[topics.Count];
-            // get posts which do not have a record for each topic
-            for (int i = 0; i < topics.Count; i++)
+            int processed = 0;
+            var classifier = _classifierFactory.GetFeed(topicName);
+            if (classifier == null)
             {
-                Topic? topic = topics[i];
-                var classifier = _classifierFactory.GetFeed(topic.Name);
-                if (classifier == null)
-                {
-                    continue;
-                }
-
-                var sw = Stopwatch.StartNew();
-                // get only post text and id
-                var posts = await dbContext.Posts
-                    .Where(p => p.SanitizedText != null && !p.PostTopics.Any(pt => pt.Topic.Name == topic.Name))
-                    .OrderByDescending(p => p.IndexedAt)
-                    .Select(p => new
-                    {
-                        p.Uri,
-                        p.SanitizedText,
-                        p.Text
-                    })
-                    .Take(batchSize)
-                    .ToListAsync(cancellationToken);
-
-                sw.Stop();
-                _logger.LogTrace("Retrieved {count} posts for {topic} in {time}ms", posts.Count, topic.Name, sw.ElapsedMilliseconds);
-
-                if (posts.Count == 0)
-                {
-                    continue;
-                }
-
-
-                sw.Restart();
-                int scoresOver100 = 0;
-                foreach (var post in posts)
-                {
-                    processed[i]++;
-                    var topicWeight = classifier.GenerateScore(post.SanitizedText!);
-                    var postTopic = new PostTopic
-                    {
-                        PostId = post.Uri,
-                        TopicId = topic.Name,
-                        Weight = topicWeight
-                    };
-                    dbContext.PostTopics.Add(postTopic);
-                    if (topicWeight >= 100)
-                    {
-                        scoresOver100++;
-                    }
-                }
-                sw.Stop();
-                _logger.LogTrace("Classified {count} posts for {topic} in {time}ms", posts.Count, topic.Name, sw.ElapsedMilliseconds);
-
-                sw.Restart();
-                await dbContext.SaveChangesAsync(cancellationToken);
-                sw.Stop();
-                _logger.LogTrace("Saved {count} posts for {topic} in {time}ms", posts.Count, topic.Name, sw.ElapsedMilliseconds);
-
-                _logger.LogDebug("Processed {count} posts for {topic}, {over100} with score over 100", posts.Count, topic.Name, scoresOver100);
+                return processed;
             }
+
+            var sw = Stopwatch.StartNew();
+
+            var posts = await dbContext.Posts
+                .Where(p => p.SanitizedText != null && p.PostTopics.All(pt => pt.Topic.Name != topicName))
+                .OrderBy(p => p.Cid)
+                .Select(p => new
+                {
+                    p.Uri,
+                    p.SanitizedText
+                })
+                .Take(batchSize)
+                .ToListAsync(cancellationToken);
+
+            sw.Stop();
+            _logger.LogInformation("Retrieved {count} posts for {topic} in {time}ms", posts.Count, topicName, sw.ElapsedMilliseconds);
+
+            if (posts.Count == 0)
+            {
+                return processed;
+            }
+
+
+            sw.Restart();
+            int scoresOver100 = 0;
+            foreach (var post in posts)
+            {
+                processed++;
+                var topicWeight = classifier.GenerateScore(post.SanitizedText!);
+                var postTopic = new PostTopic
+                {
+                    PostId = post.Uri,
+                    TopicId = topicName,
+                    Weight = topicWeight
+                };
+                dbContext.PostTopics.Add(postTopic);
+                if (topicWeight >= 100)
+                {
+                    scoresOver100++;
+                }
+            }
+            sw.Stop();
+            _logger.LogTrace("Classified {count} posts for {topic} in {time}ms", posts.Count, topicName, sw.ElapsedMilliseconds);
+
+            sw.Restart();
+            await dbContext.SaveChangesAsync(cancellationToken);
+            sw.Stop();
+            _logger.LogInformation("Saved {count} posts for {topic} in {time}ms", posts.Count, topicName, sw.ElapsedMilliseconds);
+
+            _logger.LogDebug("Processed {count} posts for {topic}, {over100} with score over 100", posts.Count, topicName, scoresOver100);
 
             return processed;
         }

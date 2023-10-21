@@ -7,7 +7,7 @@ public class Post
     public string Path { get; set; } = null!;
     public string? Text { get; set; }
     public string? SanitizedText { get; set; } = null!;
-    public string? Langs { get; set; } = null!;
+    public string[] Languages { get; set; } = null!;
     public string? Blob { get; set; } = null!;
     public DateTime IndexedAt { get; set; } = DateTime.UtcNow;
 

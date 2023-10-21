@@ -8,8 +8,8 @@ public class PostContextDesignFactory : IDesignTimeDbContextFactory<PostContext>
     public PostContext CreateDbContext(string[] args)
     {
         var optionsBuilder = new DbContextOptionsBuilder<PostContext>();
-        Console.WriteLine("Enter connection string:");
-        var connectionString = Console.ReadLine();
+
+        var connectionString = Environment.GetEnvironmentVariable("POSTGRES_CONNECTION_STRING") ?? throw new Exception("POSTGRES_CONNECTION_STRING is not set");
         optionsBuilder.UseNpgsql(connectionString);
 
         return new PostContext(optionsBuilder.Options);

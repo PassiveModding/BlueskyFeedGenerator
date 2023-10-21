@@ -3,6 +3,7 @@ using System;
 using Bluesky.Common.Database;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Common.Migrations
 {
     [DbContext(typeof(PostContext))]
-    partial class PostContextModelSnapshot : ModelSnapshot
+    [Migration("20231020234637_CidIndex")]
+    partial class CidIndex
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -34,9 +37,8 @@ namespace Common.Migrations
                     b.Property<DateTime>("IndexedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<string[]>("Languages")
-                        .IsRequired()
-                        .HasColumnType("text[]");
+                    b.Property<string>("Langs")
+                        .HasColumnType("text");
 
                     b.Property<string>("Path")
                         .IsRequired()
