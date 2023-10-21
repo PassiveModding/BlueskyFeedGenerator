@@ -24,14 +24,15 @@ public partial class TopicFeed : IFeed
 
     public async Task<object> RetrieveAsync(string? cursor, int limit, string? issuerDid, CancellationToken cancellationToken)
     {
+        limit = Math.Min(limit, 100);
+
         using var scope = _serviceProvider.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<PostContext>();
 
-        var posts = db.Posts.OrderByDescending(p => p.IndexedAt)
+        var posts = db.Posts
+            .OrderByDescending(p => p.IndexedAt)
             .ThenByDescending(p => p.Cid)
-            .Where(x => x.PostTopics.Any(t => t.Topic.Name == topicConifg.Name && t.Weight >= 100))
-            .AsQueryable();
-
+            .Where(x => x.PostTopics.Any(t => t.Topic.Name == topicConifg.Name && t.Weight >= 100));
 
         DateTime? indexedAt = null;
         string? cid = null;
