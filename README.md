@@ -1,31 +1,29 @@
 # Bluesky Feed Generator (.NET)
 ## Project Overview
 
-## Bluesky.Feed
-Bluesky.Feed is a custom feed .NET web server designed to serve posts from a database. 
-It provides a robust and flexible platform for managing and delivering posts to clients. 
+Feed generators are a way to create custom feeds for the Bluesky platform. 
+This project is a .NET implementation of a feed generator.
 
-- Modify the `appsettings.json` file to configure the database connection string and other settings.
-- The database schema is defined in the `Bluesky.Common` project.
-- The `Bluesky.Feed` project contains the web server and API controllers.
+This project is broken up into two main components:
+- **Classifiers**: These are the classes that are used to classify and store data from the bluesky firehose (JetStream)
+- **Feed Generators**: These are the classes that are used to filter and handle serving posts in a custom feed.
 
-## Bluesky.Firehose
-Bluesky.Firehose is a .NET Core console application that can be used to seed the database with posts.
+## Classifiers
+Classifiers are used to classify and store data from the bluesky firehose.
+Right now, the classifiers provided are:
+- **HelloClassifier**: This classifier is used to classify posts that contain the word "hello" in them.
+- **LikeClassifier**: This classifier is used to capture all likes on posts.
 
-Due to how Bluesky works, all events that happen on the platform are published in real-time.
+Classifiers implement a `Cleanup` method that is used to clean up any data that is no longer needed. 
+These classifiers currently cleanup likes older than 1 day and hello posts older than 7 days.
 
-The Firehose application listens to these events and processes each as it arrives.
-1. When a post event is received, it is run through multiple processing steps.
-2. The post is then sanitized by removing punctuation, stop words, and other noise.
-3. The sanitized text is then matched against keywords belonging to specific topics.
-4. Each post is then assigned a score for each topic based on the number of keywords it matches.
+## Feed Generators
+Feed generators are used to filter and handle serving posts in a custom feed.
 
-The Firehose application is designed to run continuously and process events as they arrive.
+### HelloFeedProvider
+The hello feed provider serves posts that have been classified by the HelloClassifier.
 
-## Bluesky.Firehose.Tests
-Bluesky.Firehose.Tests is a .NET Core test project that contains unit tests for the Bluesky.Firehose project.
-These tests cover the post sanitization and scoring logic.
-You can run the tests using the `dotnet test` command.
-
-## Bluesky.Common
-Bluesky.Common contains shared code that is used by the other projects. This is where the database schema is defined.
+### LikedByFollowersProvider and LikedByFollowingProvider
+The like feeds perform a lookup of the user requesting the feed before filtering likes served by LikeClassifier.
+- **LikedByFollowersProvider**: This feed provider serves posts that have been liked by users that follow the user requesting the feed.
+- **LikedByFollowingProvider**: This feed provider serves posts that have been liked by users that the user requesting the feed follows.
