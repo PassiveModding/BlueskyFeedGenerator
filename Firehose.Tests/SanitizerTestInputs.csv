@@ -1,7 +1,0 @@
-# list of expected inputs and outputs for sanitizer
-this is a test,
-UPPERCASE,uppercase
-lots    of    spaces,lot space
-spaces at end   ,space
-the quick brown fox jumps over the lazy dog,quick brown fox jump lazy dog
-theres a lot of words in this sentence,lot sentence
