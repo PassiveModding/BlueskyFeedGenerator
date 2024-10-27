@@ -1,19 +1,14 @@
 version: '3.4'
 
 services:
-  firehose:
-    image: bsky-firehose
+  blueskyfeed:
+    image: blueskyfeed
     build:
       context: .
-      dockerfile: ./Firehose/dockerfile
-    volumes:
-      - ./Firehose/appsettings.json:/app/appsettings.json
-  feed:
-    image: bsky-feed
+      dockerfile: BlueskyFeed/Dockerfile
+
+  blueskyfeed.setup:
+    image: blueskyfeed.setup
     build:
       context: .
-      dockerfile: ./Feed/dockerfile
-    ports:
-      - "5000:80"
-    volumes:
-      - ./Feed/appsettings.json:/app/appsettings.json
+      dockerfile: BlueskyFeed.Setup/Dockerfile

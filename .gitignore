@@ -10,6 +10,7 @@
 .vs/*
 bin/*
 obj/*
+.idea/*
 
 
 appsettings.json
