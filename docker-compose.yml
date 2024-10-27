@@ -6,9 +6,3 @@ services:
     build:
       context: .
       dockerfile: BlueskyFeed/Dockerfile
-
-  blueskyfeed.setup:
-    image: blueskyfeed.setup
-    build:
-      context: .
-      dockerfile: BlueskyFeed.Setup/Dockerfile
